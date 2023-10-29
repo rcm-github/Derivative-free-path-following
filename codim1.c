@@ -5,7 +5,7 @@
 #include <string.h>
 #include <math.h>
 #include "codim1.h"
-
+// LICENSE CPL Version 1.0; see LICENSE file ...
 //#define CPLUSPLUS
 
 /*
