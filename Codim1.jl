@@ -67,7 +67,7 @@ function codim1!(y::Vector{Float64}, grain::Float64, cum_al::Ref{Float64}, io, t
     nu = Cint(0)
 
     # Get the C file pointer from an existing IO
-    _io = io === stdout ? so = Libc.FILE(Libc.RawFD(1), "w") : Libc.FILE(io)
+    _io = io === stdout ? Libc.FILE(Libc.RawFD(1), "w") : Libc.FILE(io)
 
     # Convert param to void pointer
     param_ptr = param === nothing ? C_NULL : pointer_from_objref(param)
