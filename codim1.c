@@ -1,3 +1,36 @@
+#if 0
+
+#ifndef CODIM1_H
+#define CODIM1_H
+typedef enum
+{
+allocate_mem=0,
+check_start_point,
+improve_start_point,
+find_transverse,
+path_start_a,
+path_start_b,
+path_advance,
+free_mem
+} SimpconTask;
+
+void codim1
+(
+int n,               // dimenison of range
+int const nu,        // # user-defined functions
+double* y,           // [n+1]; point near zero-curve
+double* u,           // [nu]; user-function(s) at y
+double const grain,  // size for simplices
+double* cum_al,      // arc-length so-far
+FILE* fp_trace,      // file for various messages
+SimpconTask const task,
+void (*residual)(int const,int const,const double*,double*,double*,const void*),
+const void* param    // user-defined; can be null; passed into  user_func
+);
+#endif
+
+#endif
+
 #include <math.h>
 #include <stdio.h>
 #include <assert.h>
@@ -24,8 +57,8 @@ generically forms a one-dimensional manifold
 "co-dimension 1" in the  ambient space  of dimension (n+1).
 Given such a starting point  y_0  such that  f(y_0) = 0,
 this code attempts to compute a piecewise linear approximation
-to said curve starting at  y_0  and continuing for a user-specified
-arc-length. 
+to said curve starting at  y_0  and continuing to a user-specified
+stopping point (e.g., after sufficient arc-length).
 
 For engineering applications, it is often convenient to
 imagine  y \in R^{n+1}  as partitioned into  (x,\mu)  where
@@ -98,7 +131,7 @@ which sets up various data structures in static storage, so they remain
 across subsequent calls to the subroutine. 
 
 The user then calls the code with  task == check_start_point  to verify
-that  ||f(y_0)||  is sufficiently small; i.e., less than  grain/100 .
+that  ||f(y_0)||  is sufficiently small; i.e., <<  {\tt grain} .
 Here  grain  is a global constant that sets the size of the simplices.
 If the initial starting point fails this test, it is unlikely
 that subsequent path following will succeed.
@@ -112,6 +145,14 @@ is typically required, depending on the resolution of the measurement.
 I.e., if  grain  is so small that the resulting simplices fall below
 the resolution of the measurement, the path following will most likely
 crash.
+In our computational experience, getting a starting point close to the
+zero curve is essential. The user can try  improve_start point ,
+which uses an approximate Newton solve to move the starting point
+closer to the zero curve. For this operation, the last coordinate
+(\mu above) is kept fixed at its input value. Only the first  n
+coordinates are adjusted. The user can try  improve_start_point
+followed by  check_start_point more than once,
+but if there is no improvement from the first iteration, do not expect miracles. 
 
 Next, for  task ==  find_transverse , the code constructs an initial
 simplex  sigma0  centered on the user-supplied initial
@@ -293,6 +334,7 @@ extern "C" void dcopy_(...);
 extern "C" void daxpy_(...);
 extern "C" void dgetrs_(...);
 extern "C" void dgetrf_(...);
+extern "C" void dgemv_(...);
 #else
 extern void drandn_();
 extern double dnrm2_();
@@ -302,20 +344,21 @@ extern void dcopy_();
 extern void daxpy_();
 extern void dgetrs_();
 extern void dgetrf_();
+extern void dgemv_();
 #endif
 
 static void freudenthal
 (
 int const nr,  // range dimension
-double* s,    // [(nr+1) x (nr+2)]; vertices
-int const ld  // >= nr+1
+double* s,     // [(nr+1) x (nr+2)]; vertices
+int const ld   // >= nr+1
 );
 
 static void equilateral
 (
-int const nr,  // range dimension
-double* s,    // [(nr+1) x (nr+2)]; vertices
-int const lds // >= nr+1
+int const n,   // range dimension
+double* s,     // [(n+1) x (n+2)]; vertices
+int const lds  // >= nsq+1
 );
 
 static void show
@@ -336,7 +379,7 @@ R^{nr+1} -> R^nr .
 */
 
 // diagonal line going through the origin in R^3
-static void diag
+static void diag3
 (
 int const nr,    // dimension of range
 int const nu,
@@ -348,8 +391,8 @@ const void* param
 {
   assert( nr == 2 );
   assert( nu == 0 );
-  rsd[0] = y[0] - y[1];
-  rsd[1] = y[1] - y[2];
+  rsd[0] = y[0] - 3.14*y[1];
+  rsd[1] = y[1] - 2.71*y[2];
 }
 
 // unit circle in the plane
@@ -381,11 +424,11 @@ double* u,       // [nu]
 const void* param
 )
 {
-  double const rad = 1;
+  double const rad = 2;
   assert( nr == 2 );
   assert( nu == 0 );
   rsd[0] = pow(y[0],2) + pow(y[1],2) + pow(y[2],2) - rad;
-  rsd[1] = y[0];
+  rsd[1] = y[0] + y[1] - y[2];
 }
 
 static void sph_init
@@ -469,6 +512,23 @@ double* y0  //[n+1]
 #endif
 };
 
+static void santander_ex
+(
+int const nr,      // dimension of range
+int const nu,      // # user functions; >= 0
+const double* y,   // [nr+1]
+double* rsd,       // [nr]
+double* u,         // [nu]
+const void* param  // unused ...
+)
+{
+  assert( nr == 3 );
+  assert( nu == 0 );
+  rsd[0] = pow(y[0],2)   + pow(y[1],2) + pow(y[2],2) + pow(y[3],2) - 1;
+  rsd[1] = pow(y[0]-0.25,2) + pow(y[1],2) + pow(y[2],2) + pow(y[3],2) - 1;
+  rsd[2] = y[3];
+};
+
 //************************ end of test cases ********************
 
 /*
@@ -507,7 +567,7 @@ in which all vertices are also vertices of the unit hypercube.
 void bary_center
 (
 int const n,
-const double* sigma, //[(n+1)*(n+2}
+const double* sigma, //[(n+1)*(n+2)
 double* bc           //[n+1] return bary-center of sigma
 )
 {
@@ -708,11 +768,11 @@ FILE* fp_o
   for( int r = 0; r < nrow-1; r++ )
   {
     for( int c = 0; c < ncol; c++ )
-      fprintf(fp_o,"%15.7e ",dat[c*lda+r]);
+      fprintf(fp_o,"%+8.5e ",dat[c*lda+r]);
     fprintf(fp_o,";\n");
   }
   for( int c = 0; c < ncol; c++ )
-    fprintf(fp_o,"%15.7e ",dat[c*lda+(nrow-1)]);
+    fprintf(fp_o,"%+8.5e ",dat[c*lda+(nrow-1)]);
   fprintf(fp_o,";");
   fprintf(fp_o,"%s",suffix);
   fflush(fp_o);
@@ -836,7 +896,7 @@ If so, then declare the face transversal and compute an approximate
 point where zero curve crosses the facet.
 
 Numerical issue: The system above _can_ be formulated as a square
-matrix problem of dimension  n  using the matrix  F_{\tau}  for
+matrix problem of dimension  n+1  using the matrix  F_{\tau}  for
 facet  \tau :
 
 [1      1    ...    1     ]         [1   ]
@@ -847,76 +907,101 @@ facet  \tau :
 which imposes the constraint that \sigma \beta = 1.
 
 However, our computational experience leads us to prefer the
-formulation of dimension  n-1  , performing algebraic
+formulation of dimension  n  , performing algebraic
 substitution for  \beta_n ; the second formulation is
 smaller and (more importantly) seems significantly better
 conditioned.
 */
 
+static inline int interior
+(
+double const x
+)
+{
+  if( x < 0 )
+    return 0;
+    
+  if( x > 1 )
+    return 0;
+
+  return 1;
+}
+
 static int transversal
 (
 int const n,
-const double* facet,// [(n+1) x (n+1)]; return 1 iff this facet transversal to the zero curve
+const double* tau,  // [(n+1) x (n+1)]; return 1 iff this facet transversal to the zero curve
 const double* lab,  // [nx(n+1)]; facet "labels", i.e. residuals; f(\tau)
-double* y1,         // [n+1] output; point on facet (and near zero curve), if transversal; else 0
+double* y1,         // [n+1] output; point on facet (and near zero curve), if transversal; else ?
 double* beta,       // [n+1] output; b.c. coords of  y1  on that facet
 double* mat,        // [n x n] pre-allocated memory for matrix
 int* ipiv,          // [n] pre-allocated memory for pivot sequence
+int const corr_on,
+int const nu,
+void (*residual)(int const,int const,const double*,double*,double*,const void*),
 const void* param
 )
 {
-  int const sq_n = n * n;
   int const np1 = n+1;
   int info;
   int rc;  // return code ...
+  double* del = (double*)malloc((n+1)*sizeof(double)); // \Delta \beta
+  double* u = (double*)malloc(nu*sizeof(double)); // placeholder ...
 
-  dcopy_(&np1,&_d0,&_i0,y1,&_i1); // default, just to avoid uninitialized data
-
-  for( int col = 0; col < n; col++ )
+  for( int col = 0; col < n+1; col++ )
   {
-    dcopy_(&n,&lab[col*n],&_i1,&mat[col*n],&_i1);
-    daxpy_(&n,&_dn1,&lab[n*n],&_i1,&mat[col*n],&_i1);
+    dcopy_(&n,&lab[col*n],&_i1,&mat[col*(n+1)],&_i1);
+    mat[col*(n+1)+n] = 1;
   }
-
-  // compute  beta  unless system is singular ... 
-  dgetrf_(&n,&n,mat,&n,ipiv,&info);
+  dgetrf_(&np1,&np1,mat,&np1,ipiv,&info);
 
   if( info != 0 ) // singular matrix ...
   {
     fprintf(stderr,"singular matrix\n");
     rc = 0;
+    goto free_return;
   }
-  else{
-    // rhs for linear solve is negative of  f(v_n) ...
-    dcopy_(&n,&lab[sq_n],&_i1,beta,&_i1);
-    dscal_(&n,&_dn1,beta,&_i1);
 
-    // solve  nxn  linear system
-    dgetrs_("N",&n,&_i1,mat,&n,ipiv,beta,&np1,&info);
-    assert( info == 0 );
+  dcopy_(&n,&_d0,&_i0,beta,&_i1);
+  beta[n] = 1;
+  // solve  (n+1)x(n+1)  linear system
+  dgetrs_("N",&np1,&_i1,mat,&np1,ipiv,beta,&np1,&info);
+  assert( info == 0 );
 
-    beta[n] = 1;
-    for( int k = 0; k < n; k++ )
-      beta[n] -= beta[k];
+  rc = 0;
+  for( int k = 0; k < n+1; k++ )
+  {
+    if( !interior(beta[k]) )
+    {
+      goto free_return;
+    }
+  }
 
-    rc = 1;
+  // if we get here, point is interior ...
+  dgemv_("N",&np1,&np1,&_d1,tau,&np1,beta,&_i1,&_d0,y1,&_i1);
+  rc = 1;
+  
+  if( corr_on )
+  {
+    residual(n,nu,y1,del,u,param);
+    dscal_(&n,&_dn1,del,&_i1); // [-f(y),0]^T
+    del[n] = 0;
+    dgetrs_("N",&np1,&_i1,mat,&np1,ipiv,del,&np1,&info);
+
+    // ensure point is still interior
     for( int k = 0; k < n+1; k++ )
     {
-      if( beta[k] < 0.0 )
-        rc = 0;
-
-      if( beta[k] > 1.0 )
-        rc = 0;
+      if( !interior(beta[k]+del[k]) )
+        goto free_return;      
     }
-
-    if( rc == 1 )
-    {
-      // compute point on facet from b.c. coords
-      for( int k = 0; k < n+1; k++ )
-        daxpy_(&np1,&beta[k],&facet[k*(n+1)],&_i1,y1,&_i1);
-    }
+    // update and re-compute exit point ...
+    daxpy_(&np1,&_d1,del,&_i1,beta,&_i1);
+    dgemv_("N",&np1,&np1,&_d1,tau,&np1,beta,&_i1,&_d0,y1,&_i1);
   }
-
+  
+free_return:
+  free(del);
+  free(u);
   return rc;
 }
 
@@ -967,19 +1052,18 @@ double* fu            // [nu x (n+1)]; residuals for the facet
 
 void codim1
 (
-int const n,         // dimension of range
-int const nu,        // # user functions; >= 0
-double* y,           // [n+1]; y = (x,\mu) point on the zero curve
-double* u,           // [nu] interpolated values of user-functions
+int n,
+int const nu,
+double* y,   
+double* u,   
 double const grain,  // size for simplices
 double* cum_al,      // arc-length so-far
 FILE* fp_trace,      // file for various messages
 SimpconTask const task,
-void (*user_func)(int const,int const,const double*,double*,double*,const void*),
-const void* param    // user-defined; can be null; passed into  user_func
+void (*residual)(int const,int const,const double*,double*,double*,const void*),
+const void* param    // user-defined; can be null; passed into  residual
 )
 {
-  assert( n >= 1 );
   // static allocation so they persist across calls ...
   static double* sigma0;  // [(n+1) x (n+2)]; initial simplex
   static double* sigma1;  // [(n+1) x (n+2)]; most recent simplex
@@ -1010,12 +1094,15 @@ const void* param    // user-defined; can be null; passed into  user_func
   static int index_a;
   static int index_b;
   int facet_select;
-  int found_flag; // code from bc_include of a repeat
+  static int corr_on = 0;
+  static int find_transverse_recent = 0;  
+  static int path_start_recent = 0;
   static int* trans_code;
   static int index_o;
-  static double* mat;     // [nxn]; used for linear solve in  transversal
-  static int* ipiv;       // [n]; pivot sequence for said linear solve
-
+  static double* mat;     // [(n+1)x(n+1)]; used for linear solve in  transversal
+  static int* ipiv;       // [n+1]; pivot sequence for said linear solve
+  static double y0_nrm = 1e6;
+  
   // take address of these for Fortran calls
   int const np1np2 = (n+1)*(n+2);
   int const np1np1 = (n+1)*(n+1);
@@ -1026,21 +1113,19 @@ const void* param    // user-defined; can be null; passed into  user_func
   int const nnp1 = n*(n+1);
   int const np1 = n+1;
   int k; // general purpose
-  double y0_nrm;
-  double grain10;
-  double grain5 = 5*grain;
   double* yr;
   
   // re-entry point assuming previous call  
   switch( task )
   {
-  case allocate_mem:        goto allocate_mem_task;
-  case check_start_point:   goto check_start_point_task;
-  case find_transverse:     goto find_transverse_task;
-  case path_start_a:        goto path_start_a_task;
-  case path_start_b:        goto path_start_b_task;
-  case path_advance:        goto path_advance_task;
-  case free_mem:            goto free_mem_task;
+  case allocate_mem:          goto allocate_mem_task;
+  case check_start_point:     goto check_start_point_task;
+  case improve_start_point:   goto improve_start_point_task;
+  case find_transverse:       goto find_transverse_task;
+  case path_start_a:          goto path_start_a_task;
+  case path_start_b:          goto path_start_b_task;
+  case path_advance:          goto path_advance_task;
+  case free_mem:              goto free_mem_task;
   default: assert(0);
   }
 
@@ -1067,24 +1152,85 @@ allocate_mem_task:
   y_buf    = (double*)malloc((n+1)*sizeof(double));
   code_list= (int*)malloc((n+2)*sizeof(int));
   trans_code = (int*)malloc((n+3)*sizeof(int));
-  mat      = (double*)malloc(n*n*sizeof(double));
-  ipiv     = (int*)malloc(n*sizeof(int));
+  mat      = (double*)malloc((n+1)*(n+1)*sizeof(double));
+  ipiv     = (int*)malloc((n+1)*sizeof(int));
   return;
 
   // check starting point ...
 check_start_point_task:
-  user_func(n,nu,y,rsd,u,param);
-
+  residual(n,nu,y,rsd,u,param);
   y0_nrm = dnrm2_(&n,rsd,&_i1);
-  fprintf(fp_trace,"||f(y_0)|| = %e <= %e\n",y0_nrm,grain/100);
-
-  if( y0_nrm > grain/100 )
-    fprintf(fp_trace,"y_0  does not appear to be on the zero curve\n");
-  else
-    fprintf(fp_trace,"y_0  within tolerance\n");
+  fprintf(fp_trace,"||f(y_0)|| = %e <=? %e\n",y0_nrm,grain/100);
   return;
 
+improve_start_point_task:
+{
+  // generate equilaterial simplex centered on  y_0
+  // use labeled simplex as crude appx to Jacobian matrix (!)
+  // perform one step of Newton update
+  // note: y[n] kept fixed (!); improvement only in first  n coordinates...
+  double* alpha = (double*)malloc((n+1)*sizeof(double));
+  double* dalph = (double*)malloc((n+1)*sizeof(double));
+  int info;
+  
+  // construct simplex centered on y[0...n-1];
+  equilateral(n-1,tau,n+1);
+  // set last row to 0 ...
+  dcopy_(&np1,&_d0,&_i0,&tau[n],&np1);
+  // scale by  3*grain; this choice is somewhat arbitrary ...
+  double const grain3 = 3*grain;
+  dscal_(&np1np1,&grain3,tau,&_i1);
+  
+  // move to  y_0  as center
+  // last coord of all vertices is y_0[n]
+  for( int col = 0; col < n+1; col++ )
+  {
+    daxpy_(&np1,&_d1,y,&_i1,&tau[col*(n+1)],&_i1);
+  }
+  
+  // label the simplex ...
+  for( int k = 0; k < n+1; k++ )
+    residual(n,nu,&tau[k*(n+1)],&mat[k*(n+1)],u1a,param);
+
+  // set last row to all 1 ...
+  dcopy_(&np1,&_d1,&_i0,&mat[n],&np1);
+
+#if 0
+  // solve for  alpha
+  dcopy_(&n,y,&_i1,alpha,&_i1);
+  alpha[n] = 1;
+  dcopy_(&np1np1,A,&_i1,Af,&_i1); // save original for later
+  dgetrf_(&np1,&np1,Af,&np1,ipiv,&info);
+  assert( info == 0 );
+  dgetrs_("N",&np1,&_i1,Af,&np1,ipiv,alpha,&np1,&info);
+  assert( info == 0 );
+#else
+  double avg = 1/(double)(n+1);
+  dcopy_(&np1,&avg,&_i0,alpha,&_i1);
+#endif
+
+  // alpha is bary coords of  y  in  tau
+  // solve for alpha update ...
+  dgetrf_(&np1,&np1,mat,&np1,ipiv,&info);
+  assert( info == 0 );
+  residual(n,nu,y,dalph,u1a,param);
+  dalph[n] = 0;
+  dgetrs_("N",&np1,&_i1,mat,&np1,ipiv,dalph,&np1,&info);
+  daxpy_(&np1,&_dn1,dalph,&_i1,alpha,&_i1);
+
+  // compute new starting point from updated bary coords
+  dgemv_("N",&np1,&np1,&_d1,tau,&np1,alpha,&_i1,&_d0,y,&_i1);
+  free(alpha);
+  free(dalph);
+}
+  return;
+  
 find_transverse_task:
+  if( find_transverse_recent == 1 )
+  {
+    fprintf(fp_trace,"find_transvese  should only be called once\n");
+    goto free_return;
+  }
   // construct simplex centered on y_0;
   // then determine (exactly) two faces
   // transversal to the zero curve ...
@@ -1095,8 +1241,8 @@ find_transverse_task:
 
   // offset to  y_0  as center
   {
-    double* yr = (double*)malloc((n+2)*sizeof(double));
-    for( int k = 0; k < n+2; k++ )
+    double* yr = (double*)malloc((n+1)*sizeof(double));
+    for( int k = 0; k < n+1; k++ )
     {
       yr[k] = 0.1 * grain * (0.5 - (double)rand()/(double)RAND_MAX);
     }
@@ -1111,9 +1257,9 @@ find_transverse_task:
   
   // label the simplex ...
   for( int k = 0; k < n+2; k++ )
-    user_func(n,nu,&sigma0[k*(n+1)],&s_rsd0[k*n],&su0[k*nu],param);
+    residual(n,nu,&sigma0[k*(n+1)],&s_rsd0[k*n],&su0[k*nu],param);
 
-  show("rsd\n",s_rsd0,n,n+2,n,"\n",fp_trace);
+  show("rsd at vertices of initial simplex\n",s_rsd0,n,n+2,n,"\n",fp_trace);
 
   /*=======================
   Find two facets of  sigma0  transversal to the zero curve
@@ -1121,8 +1267,8 @@ find_transverse_task:
   k = 0;
   while(k < n+2)
   {
-    get_facet(n,nu,sigma0,s_rsd0,su0,k,tau,f_rsd,fu);
-    trans_code[k] = transversal(n,tau,f_rsd,y1a,beta,mat,ipiv,param);
+    get_facet(n,nu,sigma0,s_rsd0,su0,k,tau,f_rsd,fu);  
+    trans_code[k] = transversal(n,tau,f_rsd,y1a,beta,mat,ipiv,0,nu,residual,param);
     k++;
   }
   trans_code[n+2] = 1; // sentinel 
@@ -1140,7 +1286,7 @@ find_transverse_task:
   index_a = k;
 
   get_facet(n,nu,sigma0,s_rsd0,su0,index_a,tau,f_rsd,fu);
-  (void)transversal(n,tau,f_rsd,y1a,beta,mat,ipiv,param);
+  (void)transversal(n,tau,f_rsd,y1a,beta,mat,ipiv,corr_on,nu,residual,param);
 
   // compute u1a using  fu  and  beta
   dcopy_(&nu,&_d0,&_i0,u1a,&_i1);
@@ -1150,7 +1296,7 @@ find_transverse_task:
   show("y1a\n",y1a,1,n+1,1,"\n",fp_trace);
   show("u1a",u1a,1,nu,1,"\n",fp_trace);
 
-  user_func(n,nu,y1a,rsd,u,param);
+  residual(n,nu,y1a,rsd,u,param);
   fprintf(fp_trace,"\t||%e||\n",dnrm2_(&n,rsd,&_i1));
 
   k++;
@@ -1168,7 +1314,8 @@ find_transverse_task:
   index_b = k;
 
   get_facet(n,nu,sigma0,s_rsd0,su0,index_b,tau,f_rsd,fu);
-  (void)transversal(n,tau,f_rsd,y1b,beta,mat,ipiv,param);
+  (void)transversal(n,tau,f_rsd,y1b,beta,mat,ipiv,corr_on,nu,residual,param);
+  
   // compute u1b using  fu  and  beta
   dcopy_(&nu,&_d0,&_i0,u1b,&_i1);
   for( int k = 0; k < n+1; k++ )
@@ -1176,7 +1323,7 @@ find_transverse_task:
 
   show("y1b\n",y1b,1,n+1,1,"\n",fp_trace);
   show("u1b",u1b,1,nu,1,"\n",fp_trace);
-  user_func(n,nu,y1b,rsd,u,param);
+  residual(n,nu,y1b,rsd,u,param);
   fprintf(fp_trace,"\t||%e||\n",dnrm2_(&n,rsd,&_i1));
 
   k++;
@@ -1193,14 +1340,27 @@ find_transverse_task:
 
   *cum_al = 0;
   // normal return; user must re-enter with  task == path_start_task
-  return;
+  find_transverse_recent = 1;
+return;
 
 path_start_a_task:
   facet_select = index_a;
   goto _path_start_task;
 path_start_b_task:
   facet_select = index_b;
-_path_start_task: 
+_path_start_task:
+  if( find_transverse_recent == 0 )
+  {
+    fprintf(fp_trace,"must call  find_transverse  before  path_select  \n");
+    goto free_return;
+  }
+  
+  if( path_start_recent == 1 )
+  {
+    fprintf(fp_trace,"path_start_[ab] should only be called once\n");
+    goto free_return;
+  }
+  
   // user has set  facet_select  to one of index_a or index_b
   if( facet_select == index_a )
   {
@@ -1224,7 +1384,8 @@ _path_start_task:
 
   // take first step to  sigma1  and update vertex label
   pivot(n,nu,facet_select,sigma0,sigma1,s_rsd0,s_rsd1,su0,su1);
-  user_func(n,nu,&sigma1[facet_select*(n+1)],&s_rsd1[facet_select*n],&su1[facet_select*nu],param);
+  residual(n,nu,&sigma1[facet_select*(n+1)],&s_rsd1[facet_select*n],&su1[facet_select*nu],param);
+
   /*
 
                          sigma1
@@ -1244,6 +1405,7 @@ _path_start_task:
   */
 
   index_o = facet_select;
+  path_start_recent = 1;
   return;
   
 path_advance_task:
@@ -1260,7 +1422,7 @@ path_advance_task:
     if( k != index_o )
     {
       get_facet(n,nu,sigma1,s_rsd1,su1,k,tau,f_rsd,fu);
-      trans_code[k] = transversal(n,tau,f_rsd,y_out,beta,mat,ipiv,param);
+      trans_code[k] = transversal(n,tau,f_rsd,y_out,beta,mat,ipiv,0,nu,residual,param);
     }else
       trans_code[k] = 0;
     k++;
@@ -1294,7 +1456,7 @@ path_advance_task:
 
   // now, compute exit point  y_out ...
   get_facet(n,nu,sigma1,s_rsd1,su1,index_o,tau,f_rsd,fu);
-  (void)transversal(n,tau,f_rsd,y_out,beta,mat,ipiv,param);
+  (void)transversal(n,tau,f_rsd,y_out,beta,mat,ipiv,corr_on,nu,residual,param);
 
   dcopy_(&nu,&_d0,&_i0,u,&_i1);
   for( int k = 0; k < n+1; k++ )
@@ -1316,7 +1478,7 @@ path_advance_task:
 
   pivot(n,nu,index_o,sigma0,sigma1,s_rsd0,s_rsd1,su0,su1);
   // update one new vertex label
-  user_func(n,nu,&sigma1[index_o*(n+1)],&s_rsd1[index_o*n],&su1[index_o*nu],param);
+  residual(n,nu,&sigma1[index_o*(n+1)],&s_rsd1[index_o*n],&su1[index_o*nu],param);
   
   // sigma1  is now at the end of the path so far ...
   // index_o  identifies the exit facet with point  y_out
@@ -1350,37 +1512,53 @@ free_return: free_mem_task:
 }
 
 #if 1
+#define FUN helix
 int main()
 {
   int const nr = 2; // mapping from R^{nr+1} -> R^nr
   int const nu = 0; // # user functions
   double v[nr+1];
-  v[0] = 0.459619; // point on the zero curve 
-  v[1] = 0.954594;
+#if 1
+  v[0] = 0.42;//5 9619;
+  v[1] = 0.92;//5 4594;
   v[2] = 1.122073;
-  
+#else
+  v[0] = 0;
+  v[1] = 0;
+  v[2] = 0.02;
+#endif
   double u[1];
-  double const grain = 0.01;
-  double cum_al;
+  double rsd[nr];
+  
+  double grain = 0.25;
+  double cum_al = 0;
   const void* param = (void*)0;
-  codim1(nr,nu,v,u,grain,&cum_al,stdout,allocate_mem,helix,param);
-  codim1(nr,nu,v,u,grain,&cum_al,stdout,check_start_point,helix,param);
+  
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,allocate_mem,FUN,param);
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,check_start_point,FUN,param);
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,improve_start_point,FUN,param);
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,improve_start_point,FUN,param);  
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,check_start_point,FUN,param);  
 
-  FILE* fp = fopen("helix.m","w");
+  FILE* fp = fopen("FUN.m","w");
   fprintf(fp,"xx=[\n");
   fprintf(fp,"%f %f %f\n",v[0],v[1],v[2]);
-  codim1(nr,nu,v,u,grain,&cum_al,stdout,find_transverse,helix,param);
-  codim1(nr,nu,v,u,grain,&cum_al,stdout,path_start_a,helix,param);
-  fprintf(fp,"%f %f %f\n",v[0],v[1],v[2]);
 
-  while(cum_al < 25 )
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,find_transverse,FUN,param);
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,path_start_a,FUN,param);
+
+  fprintf(fp,"%f %f %f\n",v[0],v[1],v[2]);
+  fprintf(stdout,"%f %f %f\n",v[0],v[1],v[2]);  
+
+  while(cum_al < 20)
   {
-    codim1(nr,nu,v,u,grain,&cum_al,stdout,path_advance,helix,param);
+    codim1(nr,nu,v,u,grain,&cum_al,stdout,path_advance,FUN,param);
     fprintf(fp,"%f %f %f\n",v[0],v[1],v[2]);
+    fprintf(stdout,"%f %f %f\n",v[0],v[1],v[2]);
   }
   fprintf(fp,"];plot3(xx(:,1),xx(:,2),xx(:,3));\n");
 
   fclose(fp);
-  codim1(nr,nu,v,u,grain,&cum_al,stdout,free_mem,helix,param);
+  codim1(nr,nu,v,u,grain,&cum_al,stdout,free_mem,FUN,param);
 }
 #endif
